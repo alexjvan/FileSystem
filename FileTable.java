@@ -2,14 +2,26 @@ import java.util.Vector;
 
 public class FileTable {
 
-   private Vector table;         // the actual entity of this file table
+   private Vector<FileTableEntry> table;         // the actual entity of this file table
    private Directory dir;        // the root directory 
 
    public FileTable( Directory directory ) { // constructor
-      this.table = new Vector( );     // instantiate a file (structure) table
+      this.table = new Vector<FileTableEntry>( );     // instantiate a file (structure) table
       this.dir = directory;           // receive a reference to the Director
    }                             // from the file system
 
+   public FileTableEntry getEntry(int num) {
+	   return table.get(num);
+   }
+   
+   public int getNum(FileTableEntry ent) {
+	   for(int i = 0; i < table.capacity(); i++) {
+		   if(table.get(i) == ent)
+			   return i;
+	   }
+	   return -1;
+   }
+   
    // major public methods
    public synchronized FileTableEntry falloc( String filename, String mode ) {
       // allocate a new file (structure) table entry for this file name
@@ -66,7 +78,7 @@ public class FileTable {
 	  return entry;
    }
 
-   public synchronized boolean ffree( FileTableEntry e ) {
+   public synchronized int ffree( FileTableEntry e ) {
       // receive a file table entry reference
       // save the corresponding inode to the disk
       // free this file table entry.
@@ -88,9 +100,9 @@ public class FileTable {
 		  cur.toDisk(e.iNumber);
 		  
 		  notify();
-		  return true;
+		  return 0;
 	  }
-	  return false;
+	  return -1;
    }
 
    public synchronized boolean fempty( ) {

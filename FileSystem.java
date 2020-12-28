@@ -14,7 +14,7 @@ public class FileSystem {
       filetable = new FileTable( directory );
 
       // directory reconstruction
-      FileTableEntry dirEnt = open( "/",  "r" );
+      int dirEnt = open( "/",  "r" );
       int dirSize = fsize( dirEnt );
       if ( dirSize > 0 ) {
          byte[] dirData = new byte[dirSize];
@@ -25,42 +25,44 @@ public class FileSystem {
    }
    
    void sync() {
-	   FileTableEntry entry = open("/", "w");
+	   int entryNum = open("/", "w");
 	   byte[] temp = this.directory.directory2bytes();
 	   
-	   write(entry, temp);
-	   close(entry);
+	   write(entryNum, temp);
+	   close(entryNum);
 	   
 	   this.superblock.sync();
    }
    
-   boolean format( int files) {
+   int format( int files) {
 	   this.superblock.format(files);
 	   // Create new instance of Directory and FileTable
 	   this.directory = new Directory(this.superblock.totalInodes);
 	   this.filetable = new FileTable(this.directory);
 	   
-	   return true;
+	   return 0;
    }
    
-   FileTableEntry open( String filename, String mode ) {
+   int open( String filename, String mode ) {
 	   FileTableEntry returnMe = this.filetable.falloc(filename, mode);
-	   return returnMe;
+	   return this.filetable.getNum(returnMe);
    }
    
-   boolean close( FileTableEntry ftEnt ) {
+   int close( int ftNum ) {
+	   FileTableEntry ftEnt = this.filetable.getEntry(ftNum);
 	   // outliers
 	   if(ftEnt == null)
-		   return false;
+		   return -1;
 	   synchronized(ftEnt) {
 		   ftEnt.count--;
 		   if(ftEnt.count <= 0)
 			   return this.filetable.ffree(ftEnt);
-		   return true;
+		   return 0;
 	   }
    }
    
-   int fsize( FileTableEntry ftEnt ){
+   int fsize( int ftNum ){
+	   FileTableEntry ftEnt = this.filetable.getEntry(ftNum);
 	   if(ftEnt == null)
 		   return -1;
 	   synchronized(ftEnt) {
@@ -68,7 +70,8 @@ public class FileSystem {
 	   }
    }
    
-   int read( FileTableEntry ftEnt, byte[] buffer ) {
+   int read( int ftNum, byte[] buffer ) {
+	   FileTableEntry ftEnt = this.filetable.getEntry(ftNum);
 	   int leftToRead = 0;
 	   int dataRead = 0;
 	   int size = buffer.length;
@@ -80,7 +83,7 @@ public class FileSystem {
 	   
 	   synchronized(ftEnt) {
 		   // stop when ptr is in range and buffer can still read
-		   while(ftEnt.seekPtr < fsize(ftEnt) && buffer.length > 0) {
+		   while(ftEnt.seekPtr < fsize(ftNum) && buffer.length > 0) {
 			   int block = 0;
 			   
 			   int oset = ftEnt.seekPtr / Disk.blockSize;
@@ -103,7 +106,7 @@ public class FileSystem {
 				   int data = ftEnt.seekPtr % Disk.blockSize;
 				   int blocksLeft = Disk.blockSize - data;
 				   
-				   int remaining = fsize(ftEnt) - ftEnt.seekPtr;
+				   int remaining = fsize(ftNum) - ftEnt.seekPtr;
 				   
 				   int smallerOne = Math.min(blocksLeft, size);
 				   leftToRead = Math.min(smallerOne, remaining);
@@ -125,7 +128,8 @@ public class FileSystem {
 	   }
    }
    
-   int write (FileTableEntry ftEnt, byte[] buffer ) {
+   int write (int ftNum, byte[] buffer ) {
+	   FileTableEntry ftEnt = this.filetable.getEntry(ftNum);
 	   // outliers
 	   if(ftEnt == null || buffer == null)
 		   return -1;
@@ -243,70 +247,25 @@ public class FileSystem {
 	   return true;
    }
    
-   private boolean deallocAllBlocks( FileTableEntry ftEnt ) {
-	   // outliers
-	   if(ftEnt == null)
-		   return false;
-	   // if its being used...
-	   if(ftEnt.count > 1)
-		   return false;
-	   
-	   byte[] data;
-	   int status = ftEnt.inode.indirect;
-	   System.out.println(status);
-	   
-	   // get data if in use
-	   if(status != -1) {
-		   data = new byte[Disk.blockSize];
-		   SysLib.rawread(status, data);
-		   ftEnt.inode.indirect = -1;
-	   } else {
-		   data = null;
-	   }
-	   
-	   // if in use...
-	   if(data != null) {
-		   byte offset = 0;
-		   short block = SysLib.bytes2short(data, offset);
-		   
-		   // while data is in use, release
-		   while(block != -1) {
-				this.superblock.addFreeBlock(block);
-				block = SysLib.bytes2short(data, offset);
-		   }
-	   }
-	   
-	   // clear ALL pointers for the block
-	   for(int index = 0; index < 11; index++) {
-		   if(ftEnt.inode.direct[index] == -1)
-			   continue;
-		   else {
-			   this.superblock.addFreeBlock(ftEnt.inode.direct[index]);
-			   ftEnt.inode.direct[index] = -1;
-		   }
-	   }
-	   
-	   ftEnt.inode.toDisk(ftEnt.iNumber);
-	   return true;
-   }
-   
-   boolean delete( String filename) {
-	   FileTableEntry find = open(filename, "w");
-	   if(find == null)
-		   return false;
-	   short num = find.iNumber;
-	   boolean closed = close(find);
+   int delete( String filename) {
+	   int find = open(filename, "w");
+	   FileTableEntry ftEnt = this.filetable.getEntry(find);
+	   if(find == -1)
+		   return -1;
+	   short num = ftEnt.iNumber;
+	   int closed = close(find);
 	   boolean freed = this.directory.ifree(num);
-	   if(closed && freed)
-		   return true;
-	   return false;
+	   if(closed == 0 && freed)
+		   return 0;
+	   return -1;
    }
    
    private final int SEEK_SET = 0;
    private final int SEEK_CUR = 1;
    private final int SEEK_END = 2;
    
-   int seek( FileTableEntry ftEnt, int offset, int whence ) {
+   int seek( int ftNum, int offset, int whence ) {
+	   FileTableEntry ftEnt = this.filetable.getEntry(ftNum);
 	   if(whence != 0 && whence != 1 && whence != 2)
 		   return -1;
 	   
@@ -314,16 +273,16 @@ public class FileSystem {
 		   if(ftEnt == null)
 			   return -1;
 		   if(whence == SEEK_SET) {
-			   if(offset <= fsize(ftEnt) && offset >= 0)
+			   if(offset <= fsize(ftNum) && offset >= 0)
 				   ftEnt.seekPtr = offset;
 		   } else if(whence == SEEK_CUR) {
 			   // make sure the file size is greater than 0
-			   if(ftEnt.seekPtr + offset <= fsize(ftEnt) && (ftEnt.seekPtr + offset) >= 0)
+			   if(ftEnt.seekPtr + offset <= fsize(ftNum) && (ftEnt.seekPtr + offset) >= 0)
 				   ftEnt.seekPtr += offset;
 		   } else if(whence == SEEK_END) {
 			   // make sure its still in position...
-			   if(fsize(ftEnt) + offset >= 0 && fsize(ftEnt) + offset <= fsize(ftEnt))
-				   ftEnt.seekPtr = fsize(ftEnt) + offset;
+			   if(fsize(ftNum) + offset >= 0 && fsize(ftNum) + offset <= fsize(ftNum))
+				   ftEnt.seekPtr = fsize(ftNum) + offset;
 			   else
 				   return -1;
 		   }
